@@ -12,9 +12,11 @@ class Task:
     completed: bool = False
 
     def mark_complete(self):
+        """Mark this task as done."""
         self.completed = True
 
     def reset(self):
+        """Reset this task to incomplete."""
         self.completed = False
 
 
@@ -27,9 +29,11 @@ class Pet:
     tasks: list[Task] = field(default_factory=list)
 
     def add_task(self, task: Task):
+        """Append a task to this pet's task list."""
         self.tasks.append(task)
 
     def get_pending_tasks(self) -> list[Task]:
+        """Return only tasks that have not been completed."""
         return [t for t in self.tasks if not t.completed]
 
 
@@ -41,6 +45,7 @@ class Owner:
     pets: list[Pet] = field(default_factory=list)
 
     def add_pet(self, pet: Pet):
+        """Add a pet to this owner's roster."""
         self.pets.append(pet)
 
     def get_all_tasks(self) -> list[Task]:
