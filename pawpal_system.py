@@ -56,33 +56,40 @@ class Scheduler:
     def __init__(self, owner: Owner):
         self.owner = owner
 
+    def _get_pending_with_pets(self) -> list[tuple["Pet", Task]]:
+        """Returns (pet, task) pairs for all incomplete tasks, sorted by priority."""
+        pairs = [(pet, task) for pet in self.owner.pets for task in pet.get_pending_tasks()]
+        return sorted(pairs, key=lambda pt: PRIORITY_ORDER.get(pt[1].priority, 99))
+
     def generate_plan(self) -> list[Task]:
         """
         Picks tasks in priority order until the owner's available time is filled.
         Returns the list of tasks that fit in the day.
         """
-        pending = self.owner.get_all_pending_tasks()
-        sorted_tasks = sorted(pending, key=lambda t: PRIORITY_ORDER.get(t.priority, 99))
-
         plan = []
         time_remaining = self.owner.available_time
-        for task in sorted_tasks:
+        for _, task in self._get_pending_with_pets():
             if task.duration <= time_remaining:
                 plan.append(task)
                 time_remaining -= task.duration
-
         return plan
 
     def get_summary(self) -> str:
         """Returns a human-readable summary of the generated plan."""
-        plan = self.generate_plan()
-        if not plan:
+        plan_pairs = []
+        time_remaining = self.owner.available_time
+        for pet, task in self._get_pending_with_pets():
+            if task.duration <= time_remaining:
+                plan_pairs.append((pet, task))
+                time_remaining -= task.duration
+
+        if not plan_pairs:
             return "No tasks fit within the available time."
 
         lines = [f"{self.owner.name}'s plan for today ({self.owner.available_time} min available):"]
-        for task in plan:
-            lines.append(f"  [{task.priority.upper()}] {task.name} — {task.duration} min ({task.frequency})")
+        for pet, task in plan_pairs:
+            lines.append(f"  [{task.priority.upper()}] {task.name} ({pet.name}) — {task.duration} min ({task.frequency})")
 
-        total = sum(t.duration for t in plan)
+        total = sum(t.duration for _, t in plan_pairs)
         lines.append(f"Total: {total} / {self.owner.available_time} min used")
         return "\n".join(lines)
