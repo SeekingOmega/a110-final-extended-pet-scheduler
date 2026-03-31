@@ -7,23 +7,26 @@
 - schedule tasks: walks, feeding, meds, enrichment, grooming, etc. with duration and priority
 - create a daily plan based on the tasks and constraints
 
-**Main objects:**
-- Pet: name, species, age, special needs/preferences
-- Owner: name, available time, preferences
-- Task: name, duration, priority
-- Scheduler: list of tasks, constraints, method to generate daily plan
-
-
-
 **a. Initial design**
 
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+4 classes with minimal attributes:
+Pet: name, species, age, special_needs
+Owner: name, available_time, preferences
+Task: name, duration, priority
+Scheduler: tasks, constraints + generate_plan() method
+Relationships:
+Owner → owns → Pet
+Owner → uses → Scheduler
+Scheduler → schedules → Task (one-to-many)
+
 **b. Design changes**
 
 - Did your design change during implementation?
 - If yes, describe at least one change and why you made it.
+Yes I did. The UML says Owner owns Pet, but neither class holds a reference to the other at first. The Scheduler has no way to know whose pet it's planning for, or respect that pet's special_needs.
 
 ---
 

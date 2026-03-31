@@ -1,7 +1,7 @@
 classDiagram
     class Pet {
         +str name
-        +str type
+        +str species
         +int age
         +str special_needs
     }
@@ -10,6 +10,7 @@ classDiagram
         +str name
         +int available_time
         +str preferences
+        +list pets
     }
 
     class Task {
@@ -19,11 +20,11 @@ classDiagram
     }
 
     class Scheduler {
+        +Owner owner
         +list tasks
-        +dict constraints
         +generate_plan() list
     }
 
-    Owner "1" --> "1" Pet : owns
+    Owner "1" --> "*" Pet : owns
     Owner "1" --> "1" Scheduler : uses
     Scheduler "1" --> "*" Task : schedules

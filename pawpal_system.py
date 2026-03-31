@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 @dataclass
 class Pet:
     name: str
-    type: str
+    species: str
     age: int
     special_needs: str = ""
 
@@ -14,6 +14,7 @@ class Owner:
     name: str
     available_time: int  # minutes per day
     preferences: str = ""
+    pets: list["Pet"] = field(default_factory=list)
 
 
 @dataclass
@@ -24,10 +25,10 @@ class Task:
 
 
 class Scheduler:
-    def __init__(self, tasks: list[Task], constraints: dict):
+    def __init__(self, owner: Owner, tasks: list[Task]):
+        self.owner = owner
         self.tasks = tasks
-        self.constraints = constraints
 
     def generate_plan(self) -> list[Task]:
-        # TODO: sort tasks by priority and fit within available time
+        # TODO: sort tasks by priority and fit within owner.available_time
         pass
