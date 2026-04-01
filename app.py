@@ -104,7 +104,7 @@ else:
     if total_tasks == 0:
         st.info("No tasks yet. Add one above.")
     else:
-        st.markdown("#### View Tasks")
+        st.markdown("#### View Task List")
         col1, col2, col3 = st.columns(3)
         with col1:
             sort_by = st.selectbox("Sort by", ["Default (by pet)", "Scheduled time"])
@@ -132,9 +132,10 @@ else:
         if not tasks:
             st.info("No tasks match the current filter.")
         else:
-            pet_by_task  = {id(task): pet for pet in st.session_state.pets for task in pet.tasks}
+            pet_by_task = {id(task): pet for pet in st.session_state.pets for task in pet.tasks}
             rows = [
                 {
+                    "🗑️":            False,
                     "Done":           t.completed,
                     "Pet":            pet_by_task[id(t)].name if id(t) in pet_by_task else "—",
                     "Task":           t.name,
@@ -149,17 +150,22 @@ else:
             ]
             edited = st.data_editor(
                 [{k: v for k, v in r.items() if k != "_task_ref"} for r in rows],
-                column_config={"Done": st.column_config.CheckboxColumn("Done")},
+                column_config={
+                    "🗑️":  st.column_config.CheckboxColumn("🗑️"),
+                    "Done": st.column_config.CheckboxColumn("Done"),
+                },
                 disabled=["Pet", "Task", "Due date", "Time", "Duration (min)", "Priority", "Frequency"],
                 hide_index=True,
                 use_container_width=True,
             )
-            # Sync checkbox changes back to the Task objects
             changed = False
             for row, original in zip(edited, rows):
                 task = original["_task_ref"]
-                if row["Done"] and not task.completed:
-                    pet = pet_by_task.get(id(task))
+                pet  = pet_by_task.get(id(task))
+                if row["🗑️"]:
+                    pet.remove_task(task)
+                    changed = True
+                elif row["Done"] and not task.completed:
                     _scheduler.handle_completion(pet, task)
                     changed = True
                 elif not row["Done"] and task.completed:

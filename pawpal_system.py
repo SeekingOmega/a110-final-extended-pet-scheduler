@@ -50,6 +50,10 @@ class Pet:
         """Append a task to this pet's task list."""
         self.tasks.append(task)
 
+    def remove_task(self, task: Task):
+        """Remove a task from this pet's task list."""
+        self.tasks.remove(task)
+
     def get_pending_tasks(self) -> list[Task]:
         """Return only tasks that have not been completed."""
         return [t for t in self.tasks if not t.completed]
