@@ -254,55 +254,193 @@ else:
 
 st.divider()
 
-# ── Generate schedule ─────────────────────────────────────────────────────────
-st.subheader("Generate Schedule")
+# ── Generate Schedule ─────────────────────────────────────────────────────────
+st.subheader("Generate Weekly Schedule")
 
-if st.button("Generate schedule", type="primary"):
-    if not st.session_state.pets:
-        st.warning("Add at least one pet before generating a schedule.")
-    elif sum(len(p.tasks) for p in st.session_state.pets) == 0:
-        st.warning("Add at least one task before generating a schedule.")
-    else:
-        owner = Owner(name=owner_name, available_time=int(available_time))
-        for pet in st.session_state.pets:
-            owner.add_pet(pet)
+gemini_key = os.environ.get("GEMINI_API_KEY", "")
+if not gemini_key:
+    st.warning("Set the GEMINI_API_KEY environment variable to enable scheduling.")
+elif not is_authenticated():
+    st.info("Connect your Google Calendar in the sidebar to generate a schedule.")
+elif not st.session_state.pets or sum(len(p.tasks) for p in st.session_state.pets) == 0:
+    st.info("Add at least one pet and one task before generating a schedule.")
+else:
+    def _calendar_reader(start_date: str, end_date: str) -> list[dict]:
+        from datetime import date as _date
+        return read_events(
+            _date.fromisoformat(start_date),
+            _date.fromisoformat(end_date),
+        )
 
-        scheduler = Scheduler(owner)
-        plan      = scheduler.generate_plan()
+    def _task_lister() -> dict:
+        return {
+            "owner": {
+                "name": owner_name,
+                "active_hours_start": active_start.strftime("%H:%M"),
+                "active_hours_end":   active_end.strftime("%H:%M"),
+            },
+            "pets": [
+                {
+                    "name":    p.name,
+                    "species": p.species,
+                    "tasks": [
+                        {
+                            "name":      t.name,
+                            "duration":  t.duration,
+                            "priority":  t.priority,
+                            "frequency": t.frequency,
+                            "due_date":  t.due_date,
+                        }
+                        for t in p.get_pending_tasks()
+                    ],
+                }
+                for p in st.session_state.pets
+            ],
+            "week_start": week_start.isoformat(),
+            "week_end":   week_end.isoformat(),
+        }
 
-        st.success("Schedule generated!")
-        st.text(scheduler.get_summary())
+    if st.button("✨ Generate Schedule with Gemini", type="primary"):
+        with st.spinner("Gemini is reading your calendar and proposing a schedule..."):
+            try:
+                scheduler = GeminiScheduler(
+                    api_key=gemini_key,
+                    calendar_reader=_calendar_reader,
+                    task_lister=_task_lister,
+                )
+                result = scheduler.generate_schedule()
 
-        pet_by_task  = {id(task): pet.name for pet in owner.pets for task in pet.tasks}
-        all_tasks    = owner.get_all_tasks()
-        not_in_plan  = [t for t in all_tasks if t not in plan]
-        already_done = [t for t in not_in_plan if t.completed]
-        skipped      = [t for t in not_in_plan if not t.completed]
+                st.session_state.cal_events      = read_events(week_start, week_end)
+                st.session_state.proposed_events = result.get("proposed_events", [])
+                st.session_state.unschedulable   = result.get("unschedulable", [])
+                st.session_state.agent_steps     = scheduler.steps
+                st.session_state.schedule        = result
 
-        # Separate conflict-skipped tasks from time-overflow tasks
-        conflicts      = scheduler.get_conflicts()
-        conflicted_tasks = {id(task) for pairs in conflicts.values() for _, task in pairs[1:]}
-        no_time    = [t for t in skipped if id(t) not in conflicted_tasks]
-        conflicted = [t for t in skipped if id(t) in conflicted_tasks]
+            except Exception as e:
+                st.error(f"Scheduling failed: {e}")
 
-        def label(t):
-            return f"{t.name} ({pet_by_task.get(id(t), '?')})"
+    if st.session_state.schedule is not None:
+        st.success(f"Gemini proposed {len(st.session_state.proposed_events)} event(s).")
 
-        if already_done:
-            st.info(
-                f"{len(already_done)} task(s) already completed: "
-                + ", ".join(label(t) for t in already_done)
-            )
-        for slot, pairs in conflicts.items():
-            winner_pet, winner = pairs[0]
-            losers = ", ".join(f"{t.name} ({p.name})" for p, t in pairs[1:])
-            time_label = slot.replace("@", " on ") if "@" in slot else slot
-            st.warning(
-                f"Time conflict at {time_label}: **{winner.name} ({winner_pet.name})** was scheduled. "
-                f"{losers} {'was' if len(pairs) == 2 else 'were'} omitted."
-            )
-        if no_time:
-            st.warning(
-                f"{len(no_time)} task(s) didn't fit in {available_time} min: "
-                + ", ".join(label(t) for t in no_time)
-            )
+        summary = st.session_state.schedule.get("reasoning_summary", "")
+        if summary:
+            st.caption(f"💬 {summary}")
+
+        if st.session_state.agent_steps:
+            with st.expander("🔍 Gemini's tool call steps"):
+                for step in st.session_state.agent_steps:
+                    st.json(step)
+
+        st.markdown("#### Proposed Week")
+
+        cal_html = generate_calendar_html(
+            week_start=week_start,
+            existing_events=st.session_state.cal_events,
+            proposed_events=st.session_state.proposed_events,
+            active_start=active_start.strftime("%H:%M"),
+            active_end=active_end.strftime("%H:%M"),
+        )
+        st.components.v1.html(cal_html, height=500, scrolling=True)
+
+        if st.session_state.unschedulable:
+            unsch_html = render_unschedulable_html(st.session_state.unschedulable)
+            st.components.v1.html(unsch_html, height=max(60, len(st.session_state.unschedulable) * 32 + 40))
+
+        st.markdown("#### Review & Approve Events")
+        st.caption("Uncheck events to reject them. Edit Day or Time to adjust.")
+
+        rows = [
+            {
+                "Approve":        True,
+                "Pet":            ev["pet_name"],
+                "Task":           ev["task_name"],
+                "Day":            ev["day"],
+                "Time":           ev["start_time"],
+                "Duration(min)":  ev["duration_min"],
+                "Priority":       ev["priority"],
+                "_idx":           i,
+            }
+            for i, ev in enumerate(st.session_state.proposed_events)
+        ]
+
+        edited = st.data_editor(
+            [{k: v for k, v in r.items() if k != "_idx"} for r in rows],
+            column_config={
+                "Approve": st.column_config.CheckboxColumn("Approve"),
+                "Day":     st.column_config.TextColumn("Day (YYYY-MM-DD)"),
+                "Time":    st.column_config.TextColumn("Time (HH:MM)"),
+            },
+            disabled=["Pet", "Task", "Duration(min)", "Priority"],
+            hide_index=True,
+            use_container_width=True,
+            key="schedule_editor",
+        )
+
+        for row, original in zip(edited, rows):
+            ev = st.session_state.proposed_events[original["_idx"]]
+            ev["day"]        = row["Day"]
+            ev["start_time"] = row["Time"]
+
+        approved = [
+            st.session_state.proposed_events[r["_idx"]]
+            for row, r in zip(edited, rows)
+            if row["Approve"]
+        ]
+        rejected = [
+            st.session_state.proposed_events[r["_idx"]]
+            for row, r in zip(edited, rows)
+            if not row["Approve"]
+        ]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if approved:
+                if st.button(f"✅ Add {len(approved)} event(s) to Google Calendar", type="primary"):
+                    written, failed = 0, []
+                    for ev in approved:
+                        try:
+                            create_event(
+                                title=f"🐾 {ev['task_name']} ({ev['pet_name']})",
+                                day=ev["day"],
+                                start_time=ev["start_time"],
+                                duration_min=ev["duration_min"],
+                                description=f"PawPal+ scheduled pet care task – Priority: {ev['priority']}",
+                            )
+                            written += 1
+                        except Exception as e:
+                            failed.append(f"{ev['task_name']}: {e}")
+                    if failed:
+                        st.error("Some events failed to write:\n" + "\n".join(failed))
+                    else:
+                        st.success(f"✅ {written} event(s) added to your Google Calendar!")
+                        st.session_state.schedule        = None
+                        st.session_state.proposed_events = []
+                        st.session_state.unschedulable   = []
+                        st.session_state.agent_steps     = []
+                        st.rerun()
+
+        with col2:
+            if rejected and gemini_key and is_authenticated():
+                if st.button(f"↺ Reschedule {len(rejected)} rejected event(s)"):
+                    with st.spinner("Gemini is finding new slots for rejected events..."):
+                        try:
+                            sched = GeminiScheduler(
+                                api_key=gemini_key,
+                                calendar_reader=_calendar_reader,
+                                task_lister=_task_lister,
+                            )
+                            result = sched.reschedule_rejected(
+                                rejected=rejected,
+                                confirmed=approved,
+                            )
+                            remaining = [
+                                ev for ev in st.session_state.proposed_events
+                                if ev not in rejected
+                            ]
+                            st.session_state.proposed_events = remaining + result.get("proposed_events", [])
+                            st.session_state.unschedulable  += result.get("unschedulable", [])
+                            st.session_state.agent_steps     = sched.steps
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Reschedule failed: {e}")
