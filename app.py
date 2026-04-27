@@ -1,13 +1,89 @@
+import os
+from datetime import date, timedelta
 import streamlit as st
 from pawpal_system import Owner, Pet, Task, Scheduler
+from calendar_auth import get_credentials, is_authenticated, revoke_credentials
+from calendar_client import read_events, create_event
+from data_io import export_data, import_data
+from gemini_scheduler import GeminiScheduler
+from calendar_component import generate_calendar_html, render_unschedulable_html
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
 st.caption("A daily pet care planner.")
 
 # ── Session state init ────────────────────────────────────────────────────────
-if "pets" not in st.session_state:
-    st.session_state.pets = []
+if "pets"            not in st.session_state: st.session_state.pets = []
+if "schedule"        not in st.session_state: st.session_state.schedule = None
+if "proposed_events" not in st.session_state: st.session_state.proposed_events = []
+if "unschedulable"   not in st.session_state: st.session_state.unschedulable = []
+if "agent_steps"     not in st.session_state: st.session_state.agent_steps = []
+if "cal_events"      not in st.session_state: st.session_state.cal_events = []
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("⚙️ Settings")
+
+    # Google Calendar auth
+    st.subheader("Google Calendar")
+    if is_authenticated():
+        st.success("Connected")
+        if st.button("Disconnect"):
+            revoke_credentials()
+            st.rerun()
+    else:
+        if st.button("Connect Google Calendar"):
+            try:
+                get_credentials()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Auth failed: {e}")
+
+    st.divider()
+
+    # Week selection
+    st.subheader("Week")
+    next_monday = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 or 7)
+    week_start = st.date_input("Week starting (Monday)", value=next_monday)
+    week_end   = week_start + timedelta(days=6)
+    st.caption(f"{week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}")
+
+    st.divider()
+
+    # Active hours
+    st.subheader("Active Hours")
+    import datetime as _dt
+    col1, col2 = st.columns(2)
+    with col1:
+        active_start = st.time_input("From", value=_dt.time(7, 0), key="active_from")
+    with col2:
+        active_end = st.time_input("To", value=_dt.time(22, 0), key="active_to")
+
+    st.divider()
+
+    # Import / Export
+    st.subheader("Data")
+    if st.session_state.pets:
+        _export_owner = Owner(
+            name=st.session_state.get("owner_name_val", "Owner"),
+            available_time=st.session_state.get("available_time_val", 60),
+        )
+        export_json = export_data(_export_owner, st.session_state.pets)
+        st.download_button(
+            label="⬇ Export pets & tasks",
+            data=export_json,
+            file_name="pawpal_data.json",
+            mime="application/json",
+        )
+    uploaded = st.file_uploader("⬆ Import pets & tasks", type="json", label_visibility="collapsed")
+    if uploaded is not None:
+        try:
+            _, imported_pets = import_data(uploaded.read().decode())
+            st.session_state.pets = imported_pets
+            st.success(f"Imported {len(imported_pets)} pet(s).")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Import failed: {e}")
 
 st.divider()
 
@@ -18,6 +94,8 @@ with col1:
     owner_name = st.text_input("Owner name", value="Jordan")
 with col2:
     available_time = st.number_input("Available time (min/day)", min_value=1, max_value=480, value=60)
+st.session_state["owner_name_val"]     = owner_name
+st.session_state["available_time_val"] = available_time
 
 st.divider()
 
