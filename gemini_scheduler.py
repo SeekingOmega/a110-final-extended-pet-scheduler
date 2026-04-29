@@ -56,7 +56,7 @@ class GeminiScheduler:
         """
         self.client = genai.Client(api_key=api_key)
         self.config = types.GenerateContentConfig(tools=[_TOOLS])
-        self.model_name = "gemini-2.0-flash"
+        self.model_name = "gemini-2.5-flash"
         self.calendar_reader = calendar_reader
         self.task_lister = task_lister
         self.steps: list[dict] = []

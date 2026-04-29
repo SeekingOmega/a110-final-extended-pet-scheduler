@@ -1,9 +1,12 @@
 import os
 from datetime import date, timedelta
+from dotenv import load_dotenv
 import streamlit as st
+
+load_dotenv()
 from pawpal_system import Owner, Pet, Task, Scheduler
-from calendar_auth import get_credentials, is_authenticated, revoke_credentials
-from calendar_client import read_events, create_event
+from calendar_auth import get_credentials, is_authenticated, is_configured, revoke_credentials
+from calendar_client import read_events, create_event, get_or_create_pawpal_calendar_id
 from data_io import export_data, import_data
 from gemini_scheduler import GeminiScheduler
 from calendar_component import generate_calendar_html, render_unschedulable_html
@@ -13,12 +16,13 @@ st.title("🐾 PawPal+")
 st.caption("A daily pet care planner.")
 
 # ── Session state init ────────────────────────────────────────────────────────
-if "pets"            not in st.session_state: st.session_state.pets = []
-if "schedule"        not in st.session_state: st.session_state.schedule = None
-if "proposed_events" not in st.session_state: st.session_state.proposed_events = []
-if "unschedulable"   not in st.session_state: st.session_state.unschedulable = []
-if "agent_steps"     not in st.session_state: st.session_state.agent_steps = []
-if "cal_events"      not in st.session_state: st.session_state.cal_events = []
+if "pets"              not in st.session_state: st.session_state.pets = []
+if "schedule"          not in st.session_state: st.session_state.schedule = None
+if "proposed_events"   not in st.session_state: st.session_state.proposed_events = []
+if "unschedulable"     not in st.session_state: st.session_state.unschedulable = []
+if "agent_steps"       not in st.session_state: st.session_state.agent_steps = []
+if "cal_events"        not in st.session_state: st.session_state.cal_events = []
+if "imported_file_id"  not in st.session_state: st.session_state.imported_file_id = None
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -28,16 +32,26 @@ with st.sidebar:
     st.subheader("Google Calendar")
     if is_authenticated():
         st.success("Connected")
+        try:
+            from calendar_client import get_user_timezone
+            st.caption(f"🕐 Timezone: {get_user_timezone()}")
+        except Exception:
+            pass
         if st.button("Disconnect"):
             revoke_credentials()
             st.rerun()
-    else:
+    elif is_configured():
         if st.button("Connect Google Calendar"):
             try:
                 get_credentials()
                 st.rerun()
             except Exception as e:
                 st.error(f"Auth failed: {e}")
+    else:
+        st.info(
+            "Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` env vars to enable "
+            "Google Calendar. See the README for setup steps."
+        )
 
     st.divider()
 
@@ -77,13 +91,17 @@ with st.sidebar:
         )
     uploaded = st.file_uploader("⬆ Import pets & tasks", type="json", label_visibility="collapsed")
     if uploaded is not None:
-        try:
-            _, imported_pets = import_data(uploaded.read().decode())
-            st.session_state.pets = imported_pets
-            st.success(f"Imported {len(imported_pets)} pet(s).")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Import failed: {e}")
+        file_bytes = uploaded.read()
+        file_hash = hash(file_bytes)
+        if file_hash != st.session_state.imported_file_id:
+            try:
+                _, imported_pets = import_data(file_bytes.decode())
+                st.session_state.pets = imported_pets
+                st.session_state.imported_file_id = file_hash
+                st.success(f"Imported {len(imported_pets)} pet(s).")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Import failed: {e}")
 
 st.divider()
 
@@ -301,6 +319,10 @@ else:
         }
 
     if st.button("✨ Generate Schedule with Gemini", type="primary"):
+        # Clear stale checkbox states from any previous schedule
+        for k in list(st.session_state.keys()):
+            if k.startswith("ev_"):
+                del st.session_state[k]
         with st.spinner("Gemini is reading your calendar and proposing a schedule..."):
             try:
                 scheduler = GeminiScheduler(
@@ -332,6 +354,7 @@ else:
                     st.json(step)
 
         st.markdown("#### Proposed Week")
+        st.caption("Click any 🐾 task to jump to its approve checkbox below.")
 
         cal_html = generate_calendar_html(
             week_start=week_start,
@@ -346,79 +369,68 @@ else:
             unsch_html = render_unschedulable_html(st.session_state.unschedulable)
             st.components.v1.html(unsch_html, height=max(60, len(st.session_state.unschedulable) * 32 + 40))
 
-        st.markdown("#### Review & Approve Events")
-        st.caption("Uncheck events to reject them. Edit Day or Time to adjust.")
+        st.markdown("#### Approve Events")
+        st.caption("Uncheck to reject. Click a task on the calendar above to highlight it here.")
 
-        rows = [
-            {
-                "Approve":        True,
-                "Pet":            ev["pet_name"],
-                "Task":           ev["task_name"],
-                "Day":            ev["day"],
-                "Time":           ev["start_time"],
-                "Duration(min)":  ev["duration_min"],
-                "Priority":       ev["priority"],
-                "_idx":           i,
-            }
-            for i, ev in enumerate(st.session_state.proposed_events)
-        ]
-
-        edited = st.data_editor(
-            [{k: v for k, v in r.items() if k != "_idx"} for r in rows],
-            column_config={
-                "Approve": st.column_config.CheckboxColumn("Approve"),
-                "Day":     st.column_config.TextColumn("Day (YYYY-MM-DD)"),
-                "Time":    st.column_config.TextColumn("Time (HH:MM)"),
-            },
-            disabled=["Pet", "Task", "Duration(min)", "Priority"],
-            hide_index=True,
-            use_container_width=True,
-            key="schedule_editor",
-        )
-
-        for row, original in zip(edited, rows):
-            ev = st.session_state.proposed_events[original["_idx"]]
-            ev["day"]        = row["Day"]
-            ev["start_time"] = row["Time"]
-
-        approved = [
-            st.session_state.proposed_events[r["_idx"]]
-            for row, r in zip(edited, rows)
-            if row["Approve"]
-        ]
-        rejected = [
-            st.session_state.proposed_events[r["_idx"]]
-            for row, r in zip(edited, rows)
-            if not row["Approve"]
-        ]
+        approved = []
+        rejected = []
+        for i, ev in enumerate(st.session_state.proposed_events):
+            import datetime as _dt2
+            try:
+                day_label = _dt2.date.fromisoformat(ev["day"]).strftime("%a %b %d")
+            except ValueError:
+                day_label = ev["day"]
+            st.markdown(
+                f'<div id="pawpal-ev-{i}" style="scroll-margin-top:80px"></div>',
+                unsafe_allow_html=True,
+            )
+            checked = st.checkbox(
+                f"🐾 **{ev['task_name']}** ({ev['pet_name']}) — "
+                f"{day_label} at {ev['start_time']} · {ev['duration_min']} min · {ev['priority']} priority",
+                value=st.session_state.get(f"ev_{i}", True),
+                key=f"ev_{i}",
+            )
+            if checked:
+                approved.append(ev)
+            else:
+                rejected.append(ev)
 
         col1, col2 = st.columns(2)
 
         with col1:
             if approved:
                 if st.button(f"✅ Add {len(approved)} event(s) to Google Calendar", type="primary"):
-                    written, failed = 0, []
-                    for ev in approved:
+                    with st.spinner("Writing to Pawpal petcare scheduler calendar..."):
                         try:
-                            create_event(
-                                title=f"🐾 {ev['task_name']} ({ev['pet_name']})",
-                                day=ev["day"],
-                                start_time=ev["start_time"],
-                                duration_min=ev["duration_min"],
-                                description=f"PawPal+ scheduled pet care task – Priority: {ev['priority']}",
-                            )
-                            written += 1
+                            cal_id = get_or_create_pawpal_calendar_id()
+                            written, failed = 0, []
+                            for ev in approved:
+                                try:
+                                    create_event(
+                                        title=f"🐾 {ev['task_name']} ({ev['pet_name']})",
+                                        day=ev["day"],
+                                        start_time=ev["start_time"],
+                                        duration_min=ev["duration_min"],
+                                        description=f"PawPal+ scheduled pet care task – Priority: {ev['priority']}",
+                                        calendar_id=cal_id,
+                                    )
+                                    written += 1
+                                except Exception as e:
+                                    failed.append(f"{ev['task_name']}: {e}")
+                            if failed:
+                                st.error("Some events failed:\n" + "\n".join(failed))
+                            else:
+                                st.success(f"✅ {written} event(s) added to 'Pawpal petcare scheduler'!")
+                                for k in list(st.session_state.keys()):
+                                    if k.startswith("ev_"):
+                                        del st.session_state[k]
+                                st.session_state.schedule        = None
+                                st.session_state.proposed_events = []
+                                st.session_state.unschedulable   = []
+                                st.session_state.agent_steps     = []
+                                st.rerun()
                         except Exception as e:
-                            failed.append(f"{ev['task_name']}: {e}")
-                    if failed:
-                        st.error("Some events failed to write:\n" + "\n".join(failed))
-                    else:
-                        st.success(f"✅ {written} event(s) added to your Google Calendar!")
-                        st.session_state.schedule        = None
-                        st.session_state.proposed_events = []
-                        st.session_state.unschedulable   = []
-                        st.session_state.agent_steps     = []
-                        st.rerun()
+                            st.error(f"Calendar write failed: {e}")
 
         with col2:
             if rejected and gemini_key and is_authenticated():
@@ -441,6 +453,9 @@ else:
                             st.session_state.proposed_events = remaining + result.get("proposed_events", [])
                             st.session_state.unschedulable  += result.get("unschedulable", [])
                             st.session_state.agent_steps     = sched.steps
+                            for k in list(st.session_state.keys()):
+                                if k.startswith("ev_"):
+                                    del st.session_state[k]
                             st.rerun()
                         except Exception as e:
                             st.error(f"Reschedule failed: {e}")

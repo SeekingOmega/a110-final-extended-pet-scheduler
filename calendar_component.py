@@ -28,7 +28,11 @@ def generate_calendar_html(
         raise ValueError(f"Invalid active hours format (expected HH:MM): {e}") from e
     days = [week_start + timedelta(days=i) for i in range(7)]
 
-    # Index events by date string
+    # Build global index lookup: (day, task_name, pet_name) → index in proposed_events
+    ev_index: dict[tuple, int] = {}
+    for i, ev in enumerate(proposed_events):
+        ev_index[(ev["day"], ev["task_name"], ev["pet_name"])] = i
+
     existing_by_day: dict[str, list[dict]] = {}
     for ev in existing_events:
         h = _hour(ev.get("start", ""))
@@ -55,8 +59,10 @@ def generate_calendar_html(
                 except (ValueError, IndexError):
                     ev_hour = -1
                 if ev_hour == hour:
+                    idx = ev_index.get((day_str, ev["task_name"], ev["pet_name"]), -1)
                     cell_content += (
-                        f'<div class="pr">'
+                        f'<div class="pr" onclick="scrollToEvent({idx})" '
+                        f'title="Click to highlight in approve list">'
                         f'🐾 {escape(ev["task_name"])}<br>'
                         f'<small>{escape(ev["pet_name"])} · {ev["duration_min"]}m</small>'
                         f'</div>'
@@ -79,8 +85,22 @@ def generate_calendar_html(
   .ex{{background:#313244;color:#6c7086;border-left:3px solid #585b70;border-radius:4px;
        padding:2px 4px;margin:1px;opacity:0.7;font-size:11px}}
   .pr{{background:#1e3a5f;color:#89dceb;border-left:3px solid #89b4fa;border-radius:4px;
-       padding:2px 4px;margin:1px;font-size:11px}}
+       padding:2px 4px;margin:1px;font-size:11px;cursor:pointer}}
+  .pr:hover{{background:#2a4f7a;border-left-color:#cba6f7}}
 </style>
+<script>
+function scrollToEvent(idx) {{
+  try {{
+    var el = window.parent.document.getElementById('pawpal-ev-' + idx);
+    if (el) {{
+      el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+      el.style.transition = 'box-shadow 0.2s';
+      el.style.boxShadow = '0 0 0 3px #89b4fa';
+      setTimeout(function() {{ el.style.boxShadow = ''; }}, 1800);
+    }}
+  }} catch(e) {{}}
+}}
+</script>
 <table>
   <thead><tr><th></th>{headers}</tr></thead>
   <tbody>{rows}</tbody>
