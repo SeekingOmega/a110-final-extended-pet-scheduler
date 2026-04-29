@@ -13,6 +13,14 @@ def _hour(dt_str: str) -> int:
         return -1
 
 
+def _minute(dt_str: str) -> int:
+    """Extract minute integer from an ISO datetime string like '2026-04-28T08:30:00'."""
+    try:
+        return int(dt_str[14:16])
+    except (IndexError, ValueError):
+        return 0
+
+
 def generate_calendar_html(
     week_start: date,
     existing_events: list[dict],
@@ -54,8 +62,16 @@ def generate_calendar_html(
             day_str = day.isoformat()
             cell_content = ""
             for ev in existing_by_day.get(day_str, []):
-                if _hour(ev.get("start", "")) == hour:
-                    cell_content += f'<div class="ex">{escape(ev["title"])}</div>'
+                ev_start_h = _hour(ev.get("start", ""))
+                ev_end_h   = _hour(ev.get("end", ""))
+                ev_end_m   = _minute(ev.get("end", ""))
+                # Event occupies this row if it starts at or before this hour
+                # and its end time extends past the start of this hour
+                if ev_start_h <= hour and (ev_end_h * 60 + ev_end_m) > (hour * 60):
+                    if hour == ev_start_h:
+                        cell_content += f'<div class="ex">{escape(ev["title"])}</div>'
+                    else:
+                        cell_content += f'<div class="ex-cont"></div>'
             for ev in proposed_by_day.get(day_str, []):
                 try:
                     ev_hour = int(ev.get("start_time", "").split(":")[0])
@@ -87,6 +103,8 @@ def generate_calendar_html(
   .tl{{background:#181825;color:#6c7086;text-align:right;font-size:11px;white-space:nowrap;width:44px}}
   .ex{{background:#313244;color:#6c7086;border-left:3px solid #585b70;border-radius:4px;
        padding:2px 4px;margin:1px;opacity:0.7;font-size:11px}}
+  .ex-cont{{background:#313244;border-left:3px solid #585b70;border-radius:0 0 4px 4px;
+            margin:1px;opacity:0.5;min-height:14px}}
   .pr{{background:#1e3a5f;color:#89dceb;border-left:3px solid #89b4fa;border-radius:4px;
        padding:2px 4px;margin:1px;font-size:11px;cursor:pointer}}
   .pr:hover{{background:#2a4f7a;border-left-color:#cba6f7}}

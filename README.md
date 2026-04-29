@@ -1,142 +1,219 @@
-# PawPal+ (Module 2 Project)
+# PawPal+ Calendar Agent
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+---
 
-## Scenario
+## Original Project
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+**Base project:** PawPal+ (CodePath AI110, Module 3)
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+PawPal+ is a Streamlit daily pet care task planner. It lets owners register pets, assign care tasks with priorities and frequencies, and view a daily schedule with conflict detection and completion tracking. The original system handled task sorting, filtering, and local state — no external APIs or AI.
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+---
 
-## What you will build
+## What This Extension Adds
 
-Your final app should:
+PawPal+ Calendar Agent extends the base project with:
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+- **Google Calendar integration** — reads your existing events via OAuth2 so the AI knows what time is already taken
+- **`gemini-3.1-flash-lite-preview` scheduling agent** — uses function-calling to gather calendar data and pet tasks, then proposes a conflict-free weekly schedule
+- **Interactive weekly calendar view** — proposed events appear highlighted alongside existing events; click any task to jump to its approval checkbox
+- **Human-in-the-loop confirmation** — every AI-proposed event must be explicitly approved before it touches your calendar
+- **Dedicated calendar** — all pet care events are written to a separate "Pawpal petcare scheduler" calendar for easy bulk deletion
 
-## Getting started
+---
 
-### Setup
+## System Architecture
+
+![System Architecture](assets/architecture.png)
+
+### Data flow summary
+
+```
+User configures or imports pets/tasks/active hours
+    → clicks "Generate Schedule"
+    → GeminiScheduler (gemini-3.1-flash-lite-preview)
+        ├─ tool call: read_calendar_events → Google Calendar API
+        └─ tool call: list_pet_tasks → in-memory pet/task data
+    → returns proposed_events + unschedulable + reasoning_summary
+    → calendar_component.py renders a mockup weekly calendar with existing + proposed events
+    → user approves/rejects individual events
+    → If the user chooses to add proposed events to their Google Calendar, calendar_client.py writes approved events to the "Pawpal petcare scheduler" calendar in their account
+```
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Python 3.11+
+- A Google account
+- Gemini API key — free at [aistudio.google.com](https://aistudio.google.com)
+
+### Google Cloud setup (~5 minutes, one-time)
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a project → **APIs & Services → Enable APIs** → enable **Google Calendar API**
+3. **Credentials → Create Credentials → OAuth Client ID → Desktop app**
+4. Copy the **Client ID** and **Client Secret**
+5. Add your Google account as a test user of the project: **OAuth consent screen → Test users → Add Users**
+
+### Install and run
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Suggested workflow
+Create a `.env` file in the project root:
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
-
-## Smarter Scheduling
-
-**Sorting & Filtering**
-- `Task` gained a `time: str` field for scheduled start time in `"HH:MM"` format
-- `Scheduler.sort_tasks_by_time()` — sorts all tasks using a lambda key; tasks without a time sink to the bottom
-- `Scheduler.filter_tasks(completed, pet_name)` — filter by completion status and/or pet name; both parameters are optional
-- UI: "View Task List" section with Sort by, Filter by status, and Filter by pet dropdowns
-
----
-
-**Recurring Tasks**
-- `"as_needed"` frequency renamed to `"once"`
-- `Task` gained a `due_date: str` field (`"YYYY-MM-DD"`)
-- `Task.next_occurrence()` — returns a new `Task` for the next recurrence using `timedelta` (daily = +1 day, weekly = +7 days, once = None)
-- `Scheduler.handle_completion(pet, task)` — marks a task done and automatically adds the next occurrence to the pet's task list
-- UI: due date input in the task form; checking "Done" in the table calls `handle_completion`
-
----
-
-**Task Deletion**
-- `Pet.remove_task()` method added
-- UI: 🗑️ checkbox column in the task table — checking it immediately removes the task
-
----
-
-**Conflict Detection**
-- `Scheduler.get_conflicts()` — groups pending tasks by time slot and returns any slot with 2+ tasks
-- `Scheduler.generate_plan()` updated with a `booked_slots` set — only the highest-priority task per time slot makes it into the plan; conflicting tasks are skipped
-- `Scheduler.get_summary()` refactored to delegate to `generate_plan()` so both are always in sync
-- Schedule output now prints the date and time of each task (`@ 2026-04-01 | 08:00`)
-- UI: conflict warnings are shown separately from "didn't fit" warnings, explaining which task won and which was omitted
-
-## "Testing PawPal+"
-**Command to run tests:**
-```bash
-python -m pytest tests/test_pawpal.py -v
+```
+GOOGLE_CLIENT_ID=your_client_id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your_client_secret
+GEMINI_API_KEY=your_gemini_key
 ```
 
-`test_mark_complete_changes_status`: `Task.mark_complete()` flips completed from False to True
-`test_add_task_increases_pet_task_count`: `Pet.add_task() correctly appends to the pet's task list
-`test_sort_tasks_by_time_returns_chronological_order`: `Scheduler.sort_tasks_by_time()` returns tasks in earliest-to-latest order, with tasks that have no time set placed last
-`test_daily_task_creates_next_day_recurrence`: `Scheduler.handle_completion()` marks the task done and automatically creates a new task with a due date of today + 1 day
-`test_conflict_detection_flags_duplicate_times`: `Scheduler.get_conflicts()` correctly identifies two tasks sharing the same time slot and groups them under that slot key
+```bash
+streamlit run app.py
+```
 
-## Features
+On first run, click **Connect Google Calendar** in the sidebar — a browser tab opens for Google sign-in. After approval, `token.json` is saved and future runs skip auth.
 
-### Task Management
-- **Add tasks** to any pet with a name, duration, priority, frequency, optional scheduled time (`HH:MM`), and optional due date (`YYYY-MM-DD`)
-- **Delete tasks** via the 🗑️ checkbox column in the task table — removed immediately
-- **Mark tasks complete** via the Done checkbox — completed tasks are excluded from future scheduling
-- **Reset tasks** back to incomplete if needed
+---
 
-### Multi-Pet Support
-- An owner can register any number of pets, each with a name, species, age, and optional special needs
-- Each pet maintains its own independent task list
-- All scheduling, sorting, filtering, and conflict detection work across all pets simultaneously
+## Design Decisions
 
-### Priority-Based Scheduling
-- `Scheduler.generate_plan()` sorts all pending tasks by priority (`high → medium → low`) using a numeric lookup table before building the plan
-- Tasks are added greedily in priority order until `Owner.available_time` (minutes/day) is exhausted
-- Lower-priority tasks are never scheduled ahead of higher-priority ones, even if they would fit in remaining time
+| Decision | Rationale | Trade-off |
+|---|---|---|
+| Gemini has read-only tools | Python owns all calendar writes — eliminates AI write errors | Agent can't self-correct if it proposes a bad time; user must reject and reschedule |
+| Daily tasks never carry over | A missed daily walk is only unschedulable for that day — prevents doubled-up tasks | User must re-run for the next week; no auto-rollover |
+| Separate "Pawpal petcare scheduler" calendar | User can delete all AI-added events in one step | Events appear in a separate calendar, not the user's primary one |
+| Timezone from Google Calendar API | Detects user's actual timezone at runtime instead of hardcoding | Requires an extra API call on first use; cached via `lru_cache` |
+| `st.components.v1.html()` for calendar | Avoids a full React component rewrite while giving a visual weekly grid | One-way rendering — direct in-calendar editing requires `window.parent` JS hacks |
 
-### Time Conflict Detection
-- `Scheduler.get_conflicts()` groups pending tasks by their `HH:MM` time slot and flags any slot with 2 or more tasks
-- During plan generation, a `booked_slots` set ensures only the highest-priority task per time slot enters the schedule — conflicting tasks are skipped entirely
-- The UI shows a dedicated warning per conflicted slot identifying the winning task and the omitted ones, separate from the "didn't fit in time" warning
+---
 
-### Automatic Recurrence
-- `Task.next_occurrence()` uses Python's `timedelta` to compute the next due date: today + 1 day for `daily`, today + 7 days for `weekly`
-- `Scheduler.handle_completion()` marks the task done and automatically appends the next occurrence to the pet's task list
-- Tasks with frequency `once` return `None` from `next_occurrence()` and are never rescheduled
+## Testing Summary
 
-### Sorting
-- `Scheduler.sort_tasks_by_time()` returns all tasks across all pets in chronological order using a lambda key on the `time` field
-- Tasks with no scheduled time are placed last using the sentinel value `"99:99"`
+### Unit tests — `pytest tests/`
 
-### Filtering
-- `Scheduler.filter_tasks()` accepts two optional parameters: `completed` (bool) and `pet_name` (str)
-- Either or both can be provided — omitting a parameter skips that filter
-- Enables views like "all pending tasks for Buddy" or "all completed tasks across all pets"
+32 tests across 6 files covering the full system without any real API calls:
 
-### Schedule Summary
-- `Scheduler.get_summary()` delegates entirely to `generate_plan()` so the printed output is always in sync with the actual plan
-- Each line shows priority, task name, pet name, scheduled date and time (if set), duration, and frequency
-- Prints a total time used vs. available at the bottom
-- Returns a contextual message when no tasks are scheduled: distinguishes between "all tasks already completed" and "nothing fit in the time budget"
+| File | What it tests |
+|---|---|
+| `tests/test_pawpal.py` | Task completion, recurrence, scheduling, filtering, conflict detection |
+| `tests/test_calendar_auth.py` | Auth state checks, token refresh, credential revocation |
+| `tests/test_calendar_client.py` | Event parsing, all-day event handling, create event timing |
+| `tests/test_data_io.py` | Export/import roundtrip, task fields, multi-pet, completed flag, active hours |
+| `tests/test_gemini_scheduler.py` | Tool-call loop, step logging, reschedule flow, unknown tool error |
+| `tests/test_calendar_component.py` | HTML output, day headers, active hours filtering, unschedulable list |
 
-### Task Aggregation
-- `Owner.get_all_tasks()` and `Owner.get_all_pending_tasks()` flatten task lists across all pets into a single list, used internally by the Scheduler
+```bash
+pytest tests/ -v
+```
 
-## 📸 Demo
+### Scheduling rule harness — `eval/test_harness.py`
 
-<a href="demo/demo1.png" target="_blank"><img src="demo/demo1.png" alt="Demo Screenshot"></a>
-<a href="demo/demo2.png" target="_blank"><img src="demo/demo2.png" alt="Demo Screenshot"></a>
-<a href="demo/demo3.png" target="_blank"><img src="demo/demo3.png" alt="Demo Screenshot"></a>
+5 functions that check whether a schedule object complies with the scheduling rules. The harness runs entirely against a hardcoded `MOCK_SCHEDULE` that was manually written to satisfy every rule — no model calls involved.
 
+```
+[PASS] Daily tasks not carried over to wrong day
+[PASS] No task appears in both proposed and unschedulable
+[PASS] All events within active hours
+[PASS] No proposed event overlaps existing calendar events
+[PASS] All unschedulable tasks have a reason
+```
 
+```bash
+python eval/test_harness.py
+# 5/5 tests passed
+```
+
+The 5/5 result means the validation functions themselves are correct. Because the mock data was crafted to comply, passing was guaranteed — this does not reflect model behavior. To evaluate actual model compliance, the harness would need to run against live Gemini output rather than static mock data.
+
+---
+
+## Responsible AI
+
+**Limitations and biases**
+
+- Active hours are a single daily window — weekday vs. weekend differences are not modeled
+- The system has no concept of task dependencies (e.g., "vet visit before medication")
+- Relies entirely on what's in Google Calendar; events in other calendars or outside the query window are invisible to the AI
+- The model may prioritize earlier time slots, creating an implicit "morning bias" regardless of the owner's actual routine
+
+**Potential misuse**
+
+The main risk is credential exposure: if `token.json` or the `.env` file is shared or committed, a third party could read the user's full calendar. Mitigations: both files are in `.gitignore`; the model only has read-only tools and cannot write, delete, or share calendar data on its own.
+
+**Testing surprises**
+
+The most surprising finding was a 3-hour timezone offset — events intended for 7am appeared at 10am in Google Calendar. The root cause was a hardcoded Pacific timezone while the test account was in Eastern time. Fixing it required detecting the calendar's timezone at runtime rather than assuming one. This reinforced that AI systems interacting with real infrastructure need timezone-aware data handling, not just correct logic.
+
+---
+
+## AI Collaboration Reflection
+
+**Helpful suggestion:** Claude (Claude Code) identified that `_calendar_reader` and `_task_lister` closures were defined inside the Streamlit button block. On reruns triggered by the "Reschedule Rejected" button, that block doesn't re-execute, so the closures would be out of scope and cause a `NameError`. Moving them outside the button block was a non-obvious Streamlit-specific fix that would have been hard to debug at runtime.
+
+**Flawed suggestion:** Claude recommended switching from the `google-generativeai` SDK to `google-genai` and provided the full updated API surface. However, the `GenerateContentConfig` structure it wrote placed `system_instruction` in a position that conflicted with how the SDK validates config in certain versions, causing a validation error on first run. The fix required manually reading the SDK source to identify the correct field placement.
+
+---
+
+## Reflection
+
+Building this project made clear that the hardest part of agentic AI is not the model — it's all the infrastructure the model sits on top of. OAuth flows, timezone handling, Streamlit's rerun model, and Google Calendar API quirks required more debugging time than the Gemini prompt itself.
+
+The human-in-the-loop design felt genuinely important in practice. Several times during testing, Gemini proposed schedules that looked plausible but had subtle issues — events at the edge of active hours, or weekly tasks placed on the one day the owner was busiest. Having explicit approve/reject controls meant those issues were caught before hitting the real calendar. That experience shifted my view on what "AI-assisted" means: the value isn't automation, it's the combination of AI speed with human judgment at the decision point.
+
+---
+
+## File Structure
+
+| File | Purpose |
+|---|---|
+| `app.py` | Main Streamlit app |
+| `gemini_scheduler.py` | Gemini function-calling agent |
+| `calendar_auth.py` | Google OAuth2 flow |
+| `calendar_client.py` | Read/write Google Calendar events |
+| `calendar_component.py` | Weekly HTML calendar renderer |
+| `data_io.py` | Import/export pets & tasks as JSON |
+| `pawpal_system.py` | Core domain model (original project) |
+| `eval/test_harness.py` | Scheduling rule validation functions (static mock data) |
+| `tests/test_pawpal.py` | Unit tests for core domain model |
+| `tests/test_calendar_auth.py` | Unit tests for OAuth flow |
+| `tests/test_calendar_client.py` | Unit tests for Calendar API wrapper |
+| `tests/test_data_io.py` | Unit tests for import/export |
+| `tests/test_gemini_scheduler.py` | Unit tests for Gemini agent |
+| `tests/test_calendar_component.py` | Unit tests for HTML calendar renderer |
+| `assets/architecture.mmd` | Mermaid source for system diagram |
+
+--- 
+
+## Demo walkthrough video: 
+
+I keep getting error when trying sign up and download Loom:
+![loom_error.png](assets/loom_error.png)
+
+### So please see my demo at [this Google Drive link](https://drive.google.com/drive/folders/1xKLDJ0WSyr29Rc-ShQINi0qQYJd2rO1t?usp=sharing) instead.
+
+---
+
+## Stretch Features
+
+### Agentic Workflow Enhancement (+2pts)
+
+The scheduling agent implements a multi-step tool-calling loop with observable intermediate steps:
+
+- **Two tools, model-chosen order** — `list_pet_tasks` and `read_calendar_events` are available, but the model decides which to call and when. It consistently calls `list_pet_tasks` first to learn the week range, then uses those dates to call `read_calendar_events` — an emergent sequencing not explicitly required by the prompt.
+- **Decision-making chain** — after both tool calls, the model reasons over the combined data to produce `proposed_events`, `unschedulable` (with per-task reasons), and a `reasoning_summary`.
+- **Observable intermediate steps** — every tool call (name, arguments, result count) is logged in `GeminiScheduler.steps` and displayed in the "Gemini's tool call steps" expander in the UI.
+- **Reject-and-retry loop** — when the user rejects proposed events, the agent reruns the full tool-call loop with confirmed events passed as blocked slots, producing new proposals only for the rejected tasks.
+
+### Test Harness and Evaluation Script (+2pts)
+
+Two layers of automated testing cover the system:
+
+**`pytest tests/`** — 32 unit tests across 6 files covering every module in the system (domain model, OAuth flow, Calendar API wrapper, import/export, Gemini agent, HTML renderer):
+
+**`eval/test_harness.py`** — a standalone evaluation script that runs 5 scheduling rule checks and prints a pass/fail summary.
 

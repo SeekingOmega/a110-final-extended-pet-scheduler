@@ -22,7 +22,8 @@ def test_read_events_returns_parsed_list():
             "end":   {"dateTime": "2026-04-28T09:30:00"},
         }
     ]
-    with patch("calendar_client.get_service", return_value=_mock_service(raw)):
+    with patch("calendar_client.get_service", return_value=_mock_service(raw)), \
+         patch("calendar_client.get_user_timezone", return_value="America/New_York"):
         from calendar_client import read_events
         result = read_events(date(2026, 4, 28), date(2026, 5, 4))
     assert len(result) == 1
@@ -31,7 +32,8 @@ def test_read_events_returns_parsed_list():
 
 
 def test_read_events_returns_empty_list_when_no_items():
-    with patch("calendar_client.get_service", return_value=_mock_service([])):
+    with patch("calendar_client.get_service", return_value=_mock_service([])), \
+         patch("calendar_client.get_user_timezone", return_value="America/New_York"):
         from calendar_client import read_events
         result = read_events(date(2026, 4, 28), date(2026, 5, 4))
     assert result == []
@@ -57,7 +59,8 @@ def test_create_event_end_time_is_duration_after_start():
 
 def test_read_events_handles_all_day_events():
     raw = [{"summary": "Vet Appointment", "start": {"date": "2026-04-29"}, "end": {"date": "2026-04-29"}}]
-    with patch("calendar_client.get_service", return_value=_mock_service(raw)):
+    with patch("calendar_client.get_service", return_value=_mock_service(raw)), \
+         patch("calendar_client.get_user_timezone", return_value="America/New_York"):
         from calendar_client import read_events
         result = read_events(date(2026, 4, 28), date(2026, 5, 4))
     assert result[0]["date"] == "2026-04-29"

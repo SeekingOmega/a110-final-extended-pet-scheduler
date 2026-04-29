@@ -57,6 +57,22 @@ def test_event_outside_active_hours_not_rendered():
     assert "Late Night Meeting" not in html
 
 
+def test_multi_hour_event_appears_in_each_spanned_row():
+    html = generate_calendar_html(
+        week_start=date(2026, 4, 28),
+        existing_events=[{
+            "title": "Lecture", "date": "2026-04-28",
+            "start": "2026-04-28T08:00:00", "end": "2026-04-28T10:30:00"
+        }],
+        proposed_events=[],
+        active_start="07:00",
+        active_end="22:00",
+    )
+    # Title row (08:00) and two continuation rows (09:00, 10:00) must all be present
+    assert html.count("Lecture") == 1                  # title shown once
+    assert html.count('class="ex-cont"') == 2          # continuation blocks for 09:00 and 10:00
+
+
 def test_render_unschedulable_html_empty_returns_empty_string():
     html = render_unschedulable_html([])
     assert html == ""

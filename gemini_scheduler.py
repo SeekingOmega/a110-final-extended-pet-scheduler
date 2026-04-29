@@ -59,7 +59,15 @@ class GeminiScheduler:
             system_instruction=SYSTEM_PROMPT,
             tools=[_TOOLS],
         )
+
+        # uncomment the model you want to test. This is for
+        # quickly switching between models when hitting rate limits during demos.
+
         self.model_name = "gemini-3.1-flash-lite-preview"
+        # self.model_name = "gemini-3-flash-preview"
+        # self.model_name = "gemini-2.5-flash"
+        # self.model_name = "gemini-2.5-flash-lite"
+
         self.calendar_reader = calendar_reader
         self.task_lister = task_lister
         self.steps: list[dict] = []

@@ -1,0 +1,32 @@
+flowchart TD
+    User["👤 User"]
+
+    subgraph App["Streamlit App — app.py"]
+        UI["Set pets, tasks,\nactive hours, week"]
+        Approve["Approve / Reject\nproposed events"]
+    end
+
+    subgraph Agent["Gemini Agent — gemini_scheduler.py"]
+        Flash["gemini-3.1-flash-lite-preview\nfunction-calling loop"]
+    end
+
+    subgraph Calendar["Google Calendar — calendar_client.py"]
+        Read["read_events()"]
+        Write["create_event()\n→ 'Pawpal petcare scheduler'"]
+    end
+
+    subgraph Render["Calendar View — calendar_component.py"]
+        HTML["Weekly HTML grid\nexisting + proposed events"]
+    end
+
+    User -->|"configure + click Generate"| UI
+    UI -->|"triggers agent"| Flash
+    Flash -->|"tool call: read_calendar_events"| Read
+    Flash -->|"tool call: list_pet_tasks"| UI
+    Read -->|"existing events"| Flash
+    Flash -->|"structured JSON schedule"| App
+    App -->|"proposed events"| HTML
+    HTML -->|"interactive calendar"| User
+    User -->|"checkboxes"| Approve
+    Approve -->|"approved events"| Write
+    Write -->|"writes to Google Calendar"| User
