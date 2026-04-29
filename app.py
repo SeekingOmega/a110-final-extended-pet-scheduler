@@ -1,5 +1,5 @@
 import os
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from dotenv import load_dotenv
 import streamlit as st
 
@@ -23,6 +23,8 @@ if "unschedulable"     not in st.session_state: st.session_state.unschedulable =
 if "agent_steps"       not in st.session_state: st.session_state.agent_steps = []
 if "cal_events"        not in st.session_state: st.session_state.cal_events = []
 if "imported_file_id"  not in st.session_state: st.session_state.imported_file_id = None
+if "owner_name"        not in st.session_state: st.session_state["owner_name"] = "Jordan"
+if "available_time"    not in st.session_state: st.session_state["available_time"] = 60
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -55,49 +57,51 @@ with st.sidebar:
 
     st.divider()
 
-    # Week selection
-    st.subheader("Week")
-    next_monday = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 or 7)
-    week_start = st.date_input("Week starting (Monday)", value=next_monday)
-    week_end   = week_start + timedelta(days=6)
-    st.caption(f"{week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}")
-
-    st.divider()
-
-    # Active hours
-    st.subheader("Active Hours")
-    import datetime as _dt
-    col1, col2 = st.columns(2)
-    with col1:
-        active_start = st.time_input("From", value=_dt.time(7, 0), key="active_from")
-    with col2:
-        active_end = st.time_input("To", value=_dt.time(22, 0), key="active_to")
-
-    st.divider()
-
     # Import / Export
-    st.subheader("Data")
+    st.subheader("Import / Export Data")
+    st.caption("Save your pets & tasks, or load a previous setup.")
+
     if st.session_state.pets:
         _export_owner = Owner(
-            name=st.session_state.get("owner_name_val", "Owner"),
-            available_time=st.session_state.get("available_time_val", 60),
+            name=st.session_state.get("owner_name", "Owner"),
+            available_time=st.session_state.get("available_time", 60),
         )
-        export_json = export_data(_export_owner, st.session_state.pets)
+        _act_start = st.session_state.get("active_from", time(10, 0)).strftime("%H:%M")
+        _act_end   = st.session_state.get("active_to",   time(22, 0)).strftime("%H:%M")
         st.download_button(
             label="⬇ Export pets & tasks",
-            data=export_json,
+            data=export_data(_export_owner, st.session_state.pets, _act_start, _act_end),
             file_name="pawpal_data.json",
             mime="application/json",
+            use_container_width=True,
         )
-    uploaded = st.file_uploader("⬆ Import pets & tasks", type="json", label_visibility="collapsed")
+    else:
+        st.caption("_(Add pets to enable export)_")
+
+    st.markdown("**⬆ Import from file:**")
+    uploaded = st.file_uploader(
+        "Upload pawpal_data.json",
+        type="json",
+        help="Upload a file previously exported from this app. "
+             "Overwrites current pets, tasks, owner name, and available time.",
+        label_visibility="collapsed",
+    )
     if uploaded is not None:
         file_bytes = uploaded.read()
         file_hash = hash(file_bytes)
         if file_hash != st.session_state.imported_file_id:
             try:
-                _, imported_pets = import_data(file_bytes.decode())
+                imported_owner, imported_pets, imp_act_start, imp_act_end = import_data(file_bytes.decode())
                 st.session_state.pets = imported_pets
                 st.session_state.imported_file_id = file_hash
+                st.session_state["owner_name"]    = imported_owner.name
+                st.session_state["available_time"] = imported_owner.available_time
+                if imp_act_start:
+                    h, m = map(int, imp_act_start.split(":"))
+                    st.session_state["active_from"] = time(h, m)
+                if imp_act_end:
+                    h, m = map(int, imp_act_end.split(":"))
+                    st.session_state["active_to"] = time(h, m)
                 st.success(f"Imported {len(imported_pets)} pet(s).")
                 st.rerun()
             except Exception as e:
@@ -109,11 +113,18 @@ st.divider()
 st.subheader("Owner")
 col1, col2 = st.columns(2)
 with col1:
-    owner_name = st.text_input("Owner name", value="Jordan")
+    owner_name = st.text_input("Owner name", key="owner_name")
 with col2:
-    available_time = st.number_input("Available time (min/day)", min_value=1, max_value=480, value=60)
-st.session_state["owner_name_val"]     = owner_name
-st.session_state["available_time_val"] = available_time
+    available_time = st.number_input(
+        "Available time (min/day)", min_value=1, max_value=480, step=1, key="available_time"
+    )
+
+st.markdown("**Active Hours** — window when pet care tasks can be scheduled")
+col1, col2 = st.columns(2)
+with col1:
+    active_start = st.time_input("From", value=time(10, 0), key="active_from")
+with col2:
+    active_end = st.time_input("To", value=time(22, 0), key="active_to")
 
 st.divider()
 
@@ -210,18 +221,15 @@ else:
             pet_filter_options = ["All pets"] + [p.name for p in st.session_state.pets]
             filter_pet = st.selectbox("Filter by pet", pet_filter_options)
 
-        # Build a temporary owner + scheduler just for sorting/filtering
         _owner = Owner(name=owner_name, available_time=int(available_time))
         for p in st.session_state.pets:
             _owner.add_pet(p)
         _scheduler = Scheduler(_owner)
 
-        # Apply filter
         completed_filter = None if filter_status == "All" else (filter_status == "Completed")
         pet_name_filter  = None if filter_pet == "All pets" else filter_pet
         tasks = _scheduler.filter_tasks(completed=completed_filter, pet_name=pet_name_filter)
 
-        # Apply sort
         if sort_by == "Scheduled time":
             tasks = sorted(tasks, key=lambda t: t.time if t.time else "99:99")
 
@@ -275,6 +283,11 @@ st.divider()
 # ── Generate Schedule ─────────────────────────────────────────────────────────
 st.subheader("Generate Weekly Schedule")
 
+next_monday = date.today() + timedelta(days=(7 - date.today().weekday()) % 7 or 7)
+week_start = st.date_input("Week starting (Monday)", value=next_monday, key="week_start")
+week_end   = week_start + timedelta(days=6)
+st.caption(f"Scheduling for {week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}")
+
 gemini_key = os.environ.get("GEMINI_API_KEY", "")
 if not gemini_key:
     st.warning("Set the GEMINI_API_KEY environment variable to enable scheduling.")
@@ -319,7 +332,6 @@ else:
         }
 
     if st.button("✨ Generate Schedule with Gemini", type="primary"):
-        # Clear stale checkbox states from any previous schedule
         for k in list(st.session_state.keys()):
             if k.startswith("ev_"):
                 del st.session_state[k]
@@ -375,9 +387,8 @@ else:
         approved = []
         rejected = []
         for i, ev in enumerate(st.session_state.proposed_events):
-            import datetime as _dt2
             try:
-                day_label = _dt2.date.fromisoformat(ev["day"]).strftime("%a %b %d")
+                day_label = date.fromisoformat(ev["day"]).strftime("%a %b %d")
             except ValueError:
                 day_label = ev["day"]
             st.markdown(

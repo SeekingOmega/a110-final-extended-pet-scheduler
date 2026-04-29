@@ -55,8 +55,11 @@ class GeminiScheduler:
         task_lister:     callable() -> dict
         """
         self.client = genai.Client(api_key=api_key)
-        self.config = types.GenerateContentConfig(tools=[_TOOLS])
-        self.model_name = "gemini-2.5-flash"
+        self.config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            tools=[_TOOLS],
+        )
+        self.model_name = "gemini-3.1-flash-lite-preview"
         self.calendar_reader = calendar_reader
         self.task_lister = task_lister
         self.steps: list[dict] = []
@@ -110,14 +113,14 @@ class GeminiScheduler:
     def generate_schedule(self) -> dict:
         """Ask Gemini to gather data and propose a full weekly schedule."""
         self.steps = []
-        return self._run_loop(SYSTEM_PROMPT + "\n\nGather the necessary data and propose the weekly schedule now.")
+        return self._run_loop("Gather the necessary data using the available tools and propose the weekly schedule.")
 
     def reschedule_rejected(self, rejected: list[dict], confirmed: list[dict]) -> dict:
         """Ask Gemini to find new slots for rejected events, treating confirmed as blocked."""
         self.steps = []
         prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            f"The user rejected some proposed events. Find new slots for the rejected tasks only.\n"
+            f"The user rejected some proposed events. Gather fresh calendar data, then find new slots "
+            f"for the rejected tasks only.\n"
             f"Already confirmed (treat as blocked): {json.dumps(confirmed)}\n"
             f"Rejected tasks to reschedule: {json.dumps(rejected)}\n"
             f"Return the same JSON structure for the rescheduled tasks only."

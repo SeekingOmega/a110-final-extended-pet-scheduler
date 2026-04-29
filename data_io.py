@@ -3,11 +3,16 @@ import json
 from pawpal_system import Owner, Pet, Task
 
 
-def export_data(owner: Owner, pets: list[Pet]) -> str:
+def export_data(owner: Owner, pets: list[Pet], active_start: str = "", active_end: str = "") -> str:
     """Serialize owner + pets + tasks to a JSON string."""
     return json.dumps(
         {
-            "owner": {"name": owner.name, "available_time": owner.available_time},
+            "owner": {
+                "name":               owner.name,
+                "available_time":     owner.available_time,
+                "active_hours_start": active_start,
+                "active_hours_end":   active_end,
+            },
             "pets": [
                 {
                     "name":          p.name,
@@ -34,8 +39,8 @@ def export_data(owner: Owner, pets: list[Pet]) -> str:
     )
 
 
-def import_data(json_str: str) -> tuple[Owner, list[Pet]]:
-    """Deserialize a JSON string back into Owner and Pet objects."""
+def import_data(json_str: str) -> tuple[Owner, list[Pet], str, str]:
+    """Deserialize a JSON string. Returns (owner, pets, active_start, active_end)."""
     data = json.loads(json_str)
     try:
         owner_data = data["owner"]
@@ -45,6 +50,8 @@ def import_data(json_str: str) -> tuple[Owner, list[Pet]]:
         )
     except KeyError as e:
         raise ValueError(f"Invalid export data: missing required field {e}") from e
+    active_start = owner_data.get("active_hours_start", "")
+    active_end   = owner_data.get("active_hours_end",   "")
     pets = []
     for pet_data in data.get("pets", []):
         pet = Pet(
@@ -64,4 +71,4 @@ def import_data(json_str: str) -> tuple[Owner, list[Pet]]:
                 completed=td.get("completed", False),
             ))
         pets.append(pet)
-    return owner, pets
+    return owner, pets, active_start, active_end

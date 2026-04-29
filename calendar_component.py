@@ -26,6 +26,9 @@ def generate_calendar_html(
         end_hour   = int(active_end.split(":")[0])
     except (ValueError, IndexError, AttributeError) as e:
         raise ValueError(f"Invalid active hours format (expected HH:MM): {e}") from e
+    # Treat midnight (0) as end-of-day (23) so the range is never empty
+    if end_hour == 0:
+        end_hour = 23
     days = [week_start + timedelta(days=i) for i in range(7)]
 
     # Build global index lookup: (day, task_name, pet_name) → index in proposed_events
